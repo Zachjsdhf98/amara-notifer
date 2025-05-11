@@ -1,80 +1,86 @@
-const fetch = require("node-fetch");
+const express = require('express');
+const fetch = require('node-fetch');
+const cors = require('cors');
 
-// توكنات المستخدمين
-const authTokens = [
-  "auth_id_1",
-  "auth_id_2"
-];
+const app = express();
+const PORT = process.env.PORT || 3030;
 
-// إعداد OneSignal
-const ONESIGNAL_APP_ID = "21e8a552-591d-4f5f-bbb8-dbd2b0e03c91";
-const ONESIGNAL_API_KEY = "Basic os_v2_app_ehukkuszdvhv7o5y3pjlbyb4sep6zsytqjwut3n3kk4ye3wbhliwlgev6zdru6g4mubsoz33zsy3t3okwnfpneu7ym4q4mitfdsbnfy"; // عدّلها بالمفتاح الصحيح
+app.use(cors());
+app.use(express.json());
 
-// تخزين آخر حالة لتفادي التكرار
-const lastState = {};
+let authTokens = [];
+let lastStates = {}; // لتخزين آخر حالة لكل مستخدم
 
-function sendNotification(title, message) {
+app.post('/tokens', (req, res) => {
+  const token = req.body.token;
+  if (token && !authTokens.includes(token)) {
+    authTokens.push(token);
+    console.log('📥 Token جديد مضاف:', token);
+  }
+  res.json({ status: 'تم الاستلام' });
+});
+
+function sendNotification(message) {
   fetch("https://onesignal.com/api/v1/notifications", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": ONESIGNAL_API_KEY
+      "Authorization": "Basic os_v2_app_ehukktuszvdhv7o5y3pllbyb4sep0zsytqjwwt3n3kk4ye3wbhl1wqev0zdruóg4nubs0z33zsy3t3okwnfpneu7ym4q4m1tfdsbnfy"
     },
     body: JSON.stringify({
-      app_id: ONESIGNAL_APP_ID,
+      app_id: "21e8a552-591d-4f5f-bbb8-dbd2b0e03c91",
       included_segments: ["All"],
-      headings: { en: title },
+      headings: { en: "OnlyFans إشعار" },
       contents: { en: message }
-    })
+    }),
   })
     .then(res => res.json())
-    .then(json => console.log("إشعار:", json))
-    .catch(err => console.error("خطأ في الإشعار:", err));
+    .then(json => console.log('🔔 إشعار مرسل:', json))
+    .catch(err => console.error('❌ خطأ عند إرسال الإشعار:', err));
 }
 
 setInterval(() => {
-  authTokens.forEach(auth_id => {
-    const cookie = `auth_id=${auth_id}`;
+  authTokens.forEach(async token => {
+    try {
+      const res = await fetch("https://onlyfans.com/api2/v2/users/me", {
+        headers: { "x-bc": token }
+      });
+      const data = await res.json();
 
-    // الرسائل
-    fetch("https://onlyfans.com/api2/v2/chats", {
-      headers: { cookie, "user-agent": "Mozilla/5.0", accept: "application/json" }
-    })
-      .then(res => res.json())
-      .then(data => {
-        const chat = data?.list?.[0];
-        const msg = chat?.last_message?.text;
-        const id = chat?.id;
-        if (msg && lastState[`chat_${id}`] !== msg) {
-          lastState[`chat_${id}`] = msg;
-          sendNotification(`رسالة من ${chat.with_user.username}`, msg);
-        }
-      }).catch(console.error);
+      const id = data.id;
+      if (!lastStates[id]) {
+        lastStates[id] = {
+          messages: data.new_messages,
+          subscriptions: data.subscriptions?.length || 0,
+          livestreams: data.livestreams?.length || 0
+        };
+        return;
+      }
 
-    // اللايف
-    fetch("https://onlyfans.com/api2/v2/users/me/subscribe/streams", {
-      headers: { cookie, "user-agent": "Mozilla/5.0", accept: "application/json" }
-    })
-      .then(res => res.json())
-      .then(data => {
-        const username = data?.[0]?.username;
-        if (username && !lastState[`live_${username}`]) {
-          lastState[`live_${username}`] = true;
-          sendNotification("بث مباشر", `${username} بدأ بثًا مباشرًا`);
-        }
-      }).catch(console.error);
+      if (data.new_messages > lastStates[id].messages) {
+        sendNotification("📩 وصلك رسالة جديدة!");
+      }
 
-    // الاشتراكات
-    fetch("https://onlyfans.com/api2/v2/subscriptions/count", {
-      headers: { cookie, "user-agent": "Mozilla/5.0", accept: "application/json" }
-    })
-      .then(res => res.json())
-      .then(data => {
-        const total = data?.subscriptions?.active;
-        if (total !== lastState[`subs_${auth_id}`]) {
-          lastState[`subs_${auth_id}`] = total;
-          sendNotification("اشتراكات جديدة", `لديك الآن ${total} اشتراك`);
-        }
-      }).catch(console.error);
+      if ((data.subscriptions?.length || 0) > lastStates[id].subscriptions) {
+        sendNotification("👤 اشتراك جديد على حسابك!");
+      }
+
+      if ((data.livestreams?.length || 0) > lastStates[id].livestreams) {
+        sendNotification("🎥 بدأ بث مباشر الآن!");
+      }
+
+      lastStates[id] = {
+        messages: data.new_messages,
+        subscriptions: data.subscriptions?.length || 0,
+        livestreams: data.livestreams?.length || 0
+      };
+
+    } catch (err) {
+      console.error('⚠️ فشل التحقق من التوكن:', err);
+    }
   });
-}, 60000); // كل دقيقة
+}, 5000);
+
+app.listen(PORT, () => {
+  console.log(`🚀 السيرفر يعمل على المنفذ ${PORT}`);
+});
